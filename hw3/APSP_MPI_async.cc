@@ -6,6 +6,7 @@
 #include <mpi.h>
 #include <time.h>
 #include <vector>
+#define TIME 0
 #define DEBUG 0
 #define BALL_TAG 11
 #define BALL_ACK_TAG 12
@@ -24,20 +25,27 @@ struct Job{
 
 unsigned int **map;
 int numNode, numEdge;
-MPI_Request sendReq;
+MPI_Request sendReq[800][800];
 int *minD;
 int commSize, rank;
 int *ans;
-std::vector<Job> jobs;
+//std::vector<Job> jobs;
 int color,source;
 int flag, updated=0, allUpdated=0,cycle=0;
 int ballHold=1, recvInited=1;
-int updates[2000];
-int recvData[2];
+int updates[800];
+int recvData[2], sendData[2];
+#if TIME
+double st1, et1, runST, runET, st2, et2;
+double iot=0, cput=0, synct=0, commt=0;
+double alliot=0, allcput=0, allsynct=0, allcommt=0;
+#endif
+
 #if DEBUG
 FILE* logFile;
 #endif
 
+/*
 void eraseJob(std::vector<Job>& jobs, int source, int dis, int neighbor)
 {
     for (int i=0;i<jobs.size();++i)
@@ -50,6 +58,7 @@ void eraseJob(std::vector<Job>& jobs, int source, int dis, int neighbor)
         }
     }
 }
+*/
 
 void printMap(FILE* file)
 {
@@ -70,19 +79,19 @@ void broadcast(int start, int pred)
     {
         if(map[rank][i]==2147483647 || rank==i || start==i || pred==i)
             continue;
-        int sendData[2] = {-1,-1};
+        //sendData[2] = {-1,-1};
         sendData[0] = start;
         sendData[1] = minD[start]+map[rank][i];
         #if DEBUG
         //if(i==49 && start==12)
         //printf("[rank %d] send to %d from %d dis %d\n", rank, i, start, sendData[1]);
         #endif
-        Job temp = { .source = start, .dis=sendData[1], .neighbor = i, .round = 0};
-        temp.req = (MPI_Request*)malloc(sizeof(MPI_Request));
-        eraseJob(jobs, start, -1, i);
-        MPI_Isend(sendData, 2, MPI_INT, i, DIS_TAG, MPI_COMM_WORLD, temp.req);
-        MPI_Status sendStatus;
-        //MPI_Wait(temp.req, &sendStatus);
+        //Job temp = { .source = start, .dis=sendData[1], .neighbor = i, .round = 0};
+        //temp.req = (MPI_Request*)malloc(sizeof(MPI_Request));
+        //eraseJob(jobs, start, -1, i);
+        MPI_Isend(sendData, 2, MPI_INT, i, DIS_TAG, MPI_COMM_WORLD, &sendReq[start][i]);
+        //MPI_Status sendStatus;
+        MPI_Wait(&sendReq[start][i], MPI_STATUS_IGNORE);
         //jobs.push_back(temp);
     }
 }
@@ -92,9 +101,31 @@ int main(int argc, char** argv) {
     char *inputFileName = argv[1];
     char *outputFileName = argv[2];
     int numThreads = strtol(argv[3], 0, 10);
-    FILE* inputFile = fopen (inputFileName,"r");
-    FILE* outputFile = fopen (outputFileName,"w");
+    FILE* inputFile;
+    FILE* outputFile;
+    
+    /* MPI init */
+    printf("A");
+    fflush(stdout);
+    MPI_Init(&argc, &argv);
+    inputFile = fopen (inputFileName,"r");
+    #if TIME
+    if(rank==0)
+    {
+        runST = MPI_Wtime();
+    }
+    #endif
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
+    if (rank==0)
+    {
+        outputFile = fopen (outputFileName,"w");
+        printf("init done\n");
+    }
 
+    #if TIME
+    st1 = MPI_Wtime();
+    #endif
     //malloc map
     fscanf(inputFile, "%d %d", &numNode, &numEdge);
     map = (unsigned int**)malloc(numNode*sizeof(unsigned int*));
@@ -107,6 +138,7 @@ int main(int argc, char** argv) {
     minD = (int*)malloc(sizeof(int)*numNode);
     for(int i=0;i<numNode;++i)
         minD[i] = 2147483647;
+    minD[rank] = 0;
     
     //init map
     for(int k=0;k<numEdge;++k)
@@ -116,30 +148,48 @@ int main(int argc, char** argv) {
         map[i][j] = w;
         map[j][i] = w;
     }
-    /* MPI init */
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
-    minD[rank] = 0;
     #if DEBUG
     char logFileName[10];
     sprintf(logFileName,"rank%d.log",rank);
     logFile = fopen (logFileName,"w");
     logFile = stdout;
     #endif
-    
+
+    #if TIME
+    MPI_Barrier(MPI_COMM_WORLD);
+    et1 = MPI_Wtime();
+    iot += et1-st1;
+    st1 = MPI_Wtime();
+    #endif
     MPI_Request request;
     MPI_Status status;
     broadcast(rank, rank);
+    #if TIME
+    et1 = MPI_Wtime();
+    commt += et1-st1;
+    st1 = MPI_Wtime();
+    #endif
     MPI_Barrier(MPI_COMM_WORLD);
+    #if TIME
+    et1 = MPI_Wtime();
+    synct += et1-st1;
+    #endif
     if( ballHold && rank==0)
     {
+        ans = (int*) malloc(sizeof(int)*numNode*numNode);
         #if DEBUG
         printf("[rank %d] start RING!!!!!!\n", rank);
         #endif
         color = BLACK;
         int temp[2]={color, rank};
+        #if TIME
+        st1 = MPI_Wtime();
+        #endif
         MPI_Send( temp, 2, MPI_INT, rank+1 , BALL_TAG, MPI_COMM_WORLD);
+        #if TIME
+        et1 = MPI_Wtime();
+        commt += et1-st1;
+        #endif
         ballHold=0;
     }
     while(1)
@@ -150,12 +200,19 @@ int main(int argc, char** argv) {
         source = -1;
         updated = 0;
         flag = 1;
+        #if TIME
+        st1 = MPI_Wtime();
+        #endif
         if(recvInited)
         {
             MPI_Irecv(recvData, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
             recvInited = 0;
         }
         MPI_Wait(&request, &status);
+        #if TIME
+        et1 = MPI_Wtime();
+        commt += et1-st1;
+        #endif
         while(1)
         {
             if(flag!=0)
@@ -168,10 +225,13 @@ int main(int argc, char** argv) {
 
                     if ( status.MPI_TAG == DIS_TAG )
                     {
+                        #if TIME
+                        st1 = MPI_Wtime();
+                        #endif
                         //MPI_Isend(recvData, 2, MPI_INT, status.MPI_SOURCE, DIS_ACK_TAG, MPI_COMM_WORLD, &sendReq);
                         #if DEBUG
                         //if(rank==49 && update[0]==12)
-                        //fprintf(logFile,"%lf [rank %d] recv %d,%d from %d\n", MPI_Wtime(), rank, recvData[0], recvData[1], status.MPI_SOURCE);
+                        fprintf(logFile,"%lf [rank %d] recv %d,%d from %d\n", MPI_Wtime(), rank, recvData[0], recvData[1], status.MPI_SOURCE);
                         #endif
                         if(recvData[1]<minD[recvData[0]])
                         {
@@ -181,7 +241,12 @@ int main(int argc, char** argv) {
                             minD[recvData[0]] = recvData[1];
                             updates[recvData[0]] = 1;
                         }
+                        #if TIME
+                        et1 = MPI_Wtime();
+                        cput += et1-st1;
+                        #endif
                     }
+                    /*
                     else if(status.MPI_TAG == DIS_ACK_TAG)
                     {
                         eraseJob(jobs, recvData[0], recvData[1], status.MPI_SOURCE);
@@ -190,19 +255,34 @@ int main(int argc, char** argv) {
                         //fprintf(logFile,"%lf [rank %d] ack %d,%d from %d\n", MPI_Wtime(), rank, recvData[0], recvData[1], status.MPI_SOURCE);
                         #endif
                     }
+                    */
                     else if(status.MPI_TAG == BALL_TAG)
                     {
+                        #if TIME
+                        st1 = MPI_Wtime();
+                        #endif
                         color = recvData[0];
                         source = recvData[1];
                         #if DEBUG
                         //if(rank==49 && update[0]==12)
                         fprintf(logFile,"%lf [rank %d] RB %d,%d from %d\n", MPI_Wtime(), rank, recvData[0], recvData[1], status.MPI_SOURCE);
                         #endif
+                        #if TIME
+                        et1 = MPI_Wtime();
+                        cput += et1-st1;
+                        #endif
                     }
                     else 
                         printf("[rank %d] wrong tag (%d) !!!!\n", rank, status.MPI_TAG);
+                    #if TIME
+                    st1 = MPI_Wtime();
+                    #endif
                     MPI_Irecv(recvData, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
                     MPI_Test( &request, &flag, &status);
+                    #if TIME
+                    et1 = MPI_Wtime();
+                    commt += et1-st1;
+                    #endif
                 }
                 #if DEBUG
                 else
@@ -222,13 +302,18 @@ int main(int argc, char** argv) {
         #if DEBUG>1
         printf("[rank %d] updating\n", rank);
         #endif
-        
+        #if TIME
+        st1 = MPI_Wtime();
+        #endif
         for (int i=0;i<numNode;++i)
         {
             if( updates[i])
                 broadcast(i,-1);
         }
-        
+        #if TIME
+        et1 = MPI_Wtime();
+        commt += et1-st1;
+        #endif
         /*
         for(int i=0; i<jobs.size();++i)
         {
@@ -248,12 +333,19 @@ int main(int argc, char** argv) {
         */
         if( color != -1 && source != -1)
         {
-            printf("[rank %d] recv ball %d updated=%d allUpdated=%d\n",rank, color, updated, allUpdated);
+            //printf("[rank %d] recv ball %d updated=%d allUpdated=%d\n",rank, color, updated, allUpdated);
             if( color == WHITE && allUpdated == 0)
             {
                 ++cycle;
                 int temp[2]={color,rank};
+                #if TIME
+                st1 = MPI_Wtime();
+                #endif
                 MPI_Send( temp, 2, MPI_INT, (rank==commSize-1) ? 0 : rank+1 , BALL_TAG, MPI_COMM_WORLD);
+                #if TIME
+                et1 = MPI_Wtime();
+                commt += et1-st1;
+                #endif
                 if(cycle==2)
                 {
                     break;
@@ -269,13 +361,20 @@ int main(int argc, char** argv) {
                     color = WHITE;
                 }
                 int temp[2]={color, cycle};
+                #if TIME
+                st1 = MPI_Wtime();
+                #endif
                 MPI_Send( temp, 2, MPI_INT, (rank==commSize-1) ? 0 : rank+1 , BALL_TAG, MPI_COMM_WORLD);
+                #if TIME
+                et1 = MPI_Wtime();
+                commt += et1-st1;
+                #endif
             }
         }
-#if DEBUG>2
+        #if DEBUG>2
         if(rank==0)
             printf("WHHHHHHYYYYY bh=%d updated=%d size=%d\n", ballHold, updated, jobs.size());
-#endif
+        #endif
     }
     #if DEBUG
     //if(rank==49)
@@ -286,20 +385,45 @@ int main(int argc, char** argv) {
         printf("\n");
     }
     #endif
+    #if TIME
+    st1 = MPI_Wtime();
+    #endif
+    MPI_Gather (minD, numNode, MPI_INT, ans, numNode, MPI_INT, 0, MPI_COMM_WORLD);
+    #if TIME
+    et1 = MPI_Wtime();
+    commt += et1-st1;
+    #endif
     if(rank==0)
     {
-        ans = (int*) malloc(sizeof(int)*numNode*numNode);
-        MPI_Gather (minD, numNode, MPI_INT, ans, numNode, MPI_INT, 0, MPI_COMM_WORLD);
+        //printf("malloc ans");
+        #if TIME
+        st1 = MPI_Wtime();
+        #endif
         printMap(outputFile);
+        #if TIME
+        et1 = MPI_Wtime();
+        iot += et1-st1;
+        #endif
         #if DEBUG
         printMap(stdout);
         #endif
     }
-    else
-        MPI_Gather (minD, numNode, MPI_INT, ans, numNode, MPI_INT, 0, MPI_COMM_WORLD);
 
-    
-    
+    #if TIME
+    MPI_Reduce(&cput, &allcput, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&commt, &allcommt, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&iot, &alliot, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&synct, &allsynct, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if(rank==0)
+    {
+        printf("iot time\t%lf\n", alliot);
+        printf("cput time\t%lf\n", allcput/commSize);
+        printf("commt time\t%lf\n", allcommt/commSize);
+        printf("synct time\t%lf\n", allsynct);
+        runET = MPI_Wtime();
+        printf("Runtime = %lf\n", runET-runST);
+    }
+    #endif
 
     MPI_Finalize();
 }
