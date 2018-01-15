@@ -40,7 +40,7 @@ public class Init{
 		
 		job.waitForCompletion(true);
 
-        double danglingPR = (double)job.getCounters().findCounter("N", "danglingWeights").getValue()/inputConfig.N/inputConfig.N*0.85;
+        double danglingPR = (double)job.getCounters().findCounter("N", "danglingWeights").getValue()/inputConfig.N;
         return new Config(inputConfig.N, danglingPR);
 	}
 	

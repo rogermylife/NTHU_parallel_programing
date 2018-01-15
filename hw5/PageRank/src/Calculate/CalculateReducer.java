@@ -22,6 +22,7 @@ public class CalculateReducer extends Reducer<Text,Text,Text,Text> {
     protected void setup(Reducer<Text, Text, Text, Text>.Context context) throws IOException, InterruptedException {
         this.N = context.getConfiguration().getLong("N",0L);
         this.danglingPR = context.getConfiguration().getDouble("danglingWeights", 0.0);
+        this.danglingPR = this.danglingPR/N*alpha;
         this.danglingWeights =0.0;
         this.err = 0.0;
 
@@ -75,7 +76,7 @@ public class CalculateReducer extends Reducer<Text,Text,Text,Text> {
 
     @Override
     protected void cleanup(Reducer<Text, Text, Text, Text>.Context context) throws IOException, InterruptedException {
-        context.getCounter("N", "danglingWeights").increment((long)( danglingWeights*alpha/N *Long.MAX_VALUE ));
+        context.getCounter("N", "danglingWeights").increment((long)( danglingWeights*Long.MAX_VALUE ));
         context.getCounter("N", "err").increment((long)( err *Long.MAX_VALUE ));
     }
 }
